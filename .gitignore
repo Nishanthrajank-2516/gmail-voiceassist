@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+venv/
+.env/
+
+# Gmail OAuth
+token.json
+credentials.json
+
+# Audio files
+audio/*.wav
+
+# OS / Editor
+.DS_Store
+.vscode/
+.idea/
+
+# Logs
+*.log
