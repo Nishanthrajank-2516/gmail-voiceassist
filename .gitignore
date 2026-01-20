@@ -22,3 +22,6 @@ audio/*.wav
 
 # Logs
 *.log
+
+# Local contacts (personal data)
+utils/contacts.py

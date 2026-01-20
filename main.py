@@ -1,20 +1,33 @@
 from audio.recorder import record_audio
 from stt.whisper_engine import transcribe
+from utils.contacts import resolve_contact
+
 from llm.intent_engine import extract_intent
 from llm.intent_utils import normalize_intent
+
 from gmail.gmail_client import (
     authenticate_gmail,
     send_email,
     get_latest_email,
     delete_email,
+    get_emails_from_sender,
+    reply_to_email,
 )
+
 from tts.speaker import speak
 from utils.email_analyzer import analyze_email, html_to_text
 import time
+import sys
 
 
-WAKE_WORDS = ["hey assistant", "hello assistant"]
+# 🔊 Wake words
+WAKE_WORDS = ["zara", "sara"]
+
+# 💤 Session exit (sleep)
 EXIT_WORDS = ["cancel", "stop", "go to sleep", "sleep"]
+
+# ❌ Hard exit (terminate program)
+SHUTDOWN_WORDS = ["bye", "exit", "quit"]
 
 
 def is_wake_word(text: str) -> bool:
@@ -27,23 +40,57 @@ def is_exit(text: str) -> bool:
     return any(word in text for word in EXIT_WORDS)
 
 
+def is_shutdown(text: str) -> bool:
+    text = text.lower()
+    return any(word in text for word in SHUTDOWN_WORDS)
+
+
 def is_positive(text: str) -> bool:
     text = text.lower()
     return any(
         word in text
-        for word in ["yes", "yeah", "sure", "ok", "okay", "read", "delete"]
+        for word in ["yes", "yeah", "sure", "ok", "okay", "read", "delete", "reply"]
     )
 
 
+def pick_index(text: str) -> int | None:
+    mapping = {
+        "one": 0,
+        "two": 1,
+        "three": 2,
+        "1": 0,
+        "2": 1,
+        "3": 2,
+    }
+    return mapping.get(text.lower())
+
+
+def ask_and_handle_reply(service, email_obj):
+    speak("Do you want to reply to this email?")
+    record_audio("audio/reply_confirm.wav")
+    reply = transcribe("audio/reply_confirm.wav")
+
+    if is_positive(reply):
+        speak("What should I reply?")
+        record_audio("audio/reply_body.wav")
+        reply_text = transcribe("audio/reply_body.wav")
+
+        reply_to_email(service, email_obj, reply_text)
+        speak("Reply sent")
+
+
 def handle_command(service) -> bool:
-    """
-    Returns False if session should end
-    """
     record_audio("audio/input.wav")
     text = transcribe("audio/input.wav")
 
     print("You said:", text)
 
+    # 🛑 Hard shutdown
+    if is_shutdown(text):
+        speak("Goodbye. Shutting down.")
+        sys.exit(0)
+
+    # 💤 Session exit
     if is_exit(text):
         speak("Okay. Going back to sleep.")
         return False
@@ -53,22 +100,28 @@ def handle_command(service) -> bool:
 
     print("Intent:", intent)
 
-    # SEND EMAIL
+    # 🟡 NEW: sender-aware upgrade (NO feature removal)
+    if intent["intent"] == "READ_LATEST_EMAIL" and intent.get("to"):
+        intent["intent"] = "READ_EMAIL_FROM_SENDER"
+
+    # 📧 SEND EMAIL
     if intent["intent"] == "SEND_EMAIL":
         if not intent["to"] or not intent["body"]:
             speak("I need a recipient and message")
             return True
 
+        resolved_email = resolve_contact(intent["to"]) or intent["to"]
+
         speak(f"Sending email to {intent['to']}")
         send_email(
             service,
-            to_email=intent["to"],
+            to_email=resolved_email,
             subject=intent["subject"] or "Voice Assistant Message",
             body=intent["body"],
         )
         speak("Email sent")
 
-    # READ EMAIL
+    # 📖 READ LATEST EMAIL (unchanged)
     elif intent["intent"] == "READ_LATEST_EMAIL":
         email = get_latest_email(service)
         if not email:
@@ -100,7 +153,43 @@ def handle_command(service) -> bool:
             else:
                 speak("This email does not contain readable text")
 
-    # SUMMARIZE EMAIL
+            ask_and_handle_reply(service, email)
+
+    # 📬 READ EMAILS FROM SENDER (unchanged, now reachable)
+    elif intent["intent"] == "READ_EMAIL_FROM_SENDER":
+        sender_name = intent.get("to")
+        sender_email = resolve_contact(sender_name) or sender_name
+
+        emails = get_emails_from_sender(service, sender_email)
+
+        if not emails:
+            speak(f"No recent emails from {sender_name}")
+            return True
+
+        speak(f"Here are the last {len(emails)} emails from {sender_name}")
+
+        for i, mail in enumerate(emails, start=1):
+            speak(f"Email {i}: {mail['subject']}")
+
+        speak("Which email should I read? Say one, two, or three.")
+        record_audio("audio/choice.wav")
+        choice_text = transcribe("audio/choice.wav")
+
+        idx = pick_index(choice_text)
+        if idx is None or idx >= len(emails):
+            speak("Invalid choice")
+            return True
+
+        selected = emails[idx]
+
+        speak(f"Reading email subject {selected['subject']}")
+        snippet = selected["raw"].get("snippet")
+        if snippet:
+            speak(snippet)
+
+        ask_and_handle_reply(service, selected)
+
+    # 📝 SUMMARIZE EMAIL
     elif intent["intent"] == "SUMMARIZE_LATEST_EMAIL":
         email = get_latest_email(service)
         if not email:
@@ -108,7 +197,7 @@ def handle_command(service) -> bool:
         else:
             speak(f"Latest email subject is {email['subject']}")
 
-    # DELETE EMAIL
+    # 🗑 DELETE EMAIL
     elif intent["intent"] == "DELETE_LATEST_EMAIL":
         email = get_latest_email(service)
         if not email:
@@ -140,23 +229,26 @@ def handle_command(service) -> bool:
 
 
 def main():
-    speak("Assistant is loaded. Say hey assistant to wake me up.")
+    speak("Assistant is running. Say the wake word to wake me up.")
     service = authenticate_gmail()
 
     while True:
-        # Wake word listening
         record_audio("audio/wake.wav")
         heard = transcribe("audio/wake.wav")
 
         print("Wake heard:", heard)
 
+        # 🛑 Shutdown from wake state
+        if is_shutdown(heard):
+            speak("Goodbye. Shutting down.")
+            sys.exit(0)
+
         if is_wake_word(heard):
             speak("Yes, I am listening")
 
-            session_active = True
             misunderstand_count = 0
 
-            while session_active:
+            while True:
                 result = handle_command(service)
 
                 if not result:

@@ -92,3 +92,89 @@ def delete_email(service, msg_id):
         id=msg_id
     ).execute()
     return True
+
+
+def get_emails_from_sender(service, sender_email, max_results=3):
+    query = f"from:{sender_email}"
+
+    results = service.users().messages().list(
+        userId="me",
+        q=query,
+        maxResults=max_results
+    ).execute()
+
+    messages = results.get("messages", [])
+    emails = []
+
+    for msg in messages:
+        full = service.users().messages().get(
+            userId="me",
+            id=msg["id"],
+            format="full"
+        ).execute()
+
+        headers = full["payload"].get("headers", [])
+        subject = ""
+        sender = ""
+
+        for h in headers:
+            if h["name"] == "Subject":
+                subject = h["value"]
+            elif h["name"] == "From":
+                sender = h["value"]
+
+        emails.append({
+            "id": msg["id"],
+            "subject": subject,
+            "from": sender,
+            "raw": full
+        })
+
+    return emails
+
+
+
+import base64
+from email.message import EmailMessage
+
+def reply_to_email(service, original_email, reply_text):
+    """
+    Reply to an email safely, even if 'raw' is missing.
+    """
+
+    # 🔄 Ensure full message is available
+    if "raw" not in original_email:
+        msg = service.users().messages().get(
+            userId="me",
+            id=original_email["id"],
+            format="full"
+        ).execute()
+    else:
+        msg = original_email["raw"]
+
+    headers = msg["payload"]["headers"]
+
+    def get_header(name):
+        for h in headers:
+            if h["name"].lower() == name.lower():
+                return h["value"]
+        return ""
+
+    to_email = get_header("From")
+    subject = get_header("Subject")
+    message_id = get_header("Message-ID")
+
+    reply_subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
+
+    message = MIMEText(reply_text)
+    message["To"] = to_email
+    message["Subject"] = reply_subject
+    message["In-Reply-To"] = message_id
+    message["References"] = message_id
+
+    raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+
+    service.users().messages().send(
+        userId="me",
+        body={"raw": raw}
+    ).execute()
