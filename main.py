@@ -100,9 +100,12 @@ def handle_command(service) -> bool:
 
     print("Intent:", intent)
 
-    # 🟡 NEW: sender-aware upgrade (NO feature removal)
+    # 🔁 INTENT UPGRADES (NO FEATURE REMOVAL)
     if intent["intent"] == "READ_LATEST_EMAIL" and intent.get("to"):
         intent["intent"] = "READ_EMAIL_FROM_SENDER"
+
+    if intent["intent"] == "DELETE_LATEST_EMAIL" and intent.get("to"):
+        intent["intent"] = "DELETE_EMAIL_FROM_SENDER"
 
     # 📧 SEND EMAIL
     if intent["intent"] == "SEND_EMAIL":
@@ -121,7 +124,7 @@ def handle_command(service) -> bool:
         )
         speak("Email sent")
 
-    # 📖 READ LATEST EMAIL (unchanged)
+    # 📖 READ LATEST EMAIL
     elif intent["intent"] == "READ_LATEST_EMAIL":
         email = get_latest_email(service)
         if not email:
@@ -155,7 +158,7 @@ def handle_command(service) -> bool:
 
             ask_and_handle_reply(service, email)
 
-    # 📬 READ EMAILS FROM SENDER (unchanged, now reachable)
+    # 📬 READ EMAILS FROM SENDER
     elif intent["intent"] == "READ_EMAIL_FROM_SENDER":
         sender_name = intent.get("to")
         sender_email = resolve_contact(sender_name) or sender_name
@@ -189,6 +192,43 @@ def handle_command(service) -> bool:
 
         ask_and_handle_reply(service, selected)
 
+    # 🗑 DELETE EMAIL FROM SENDER
+    elif intent["intent"] == "DELETE_EMAIL_FROM_SENDER":
+        sender_name = intent.get("to")
+        sender_email = resolve_contact(sender_name) or sender_name
+
+        emails = get_emails_from_sender(service, sender_email)
+
+        if not emails:
+            speak(f"No recent emails from {sender_name}")
+            return True
+
+        speak(f"here are the last {len(emails)} emails from {sender_name}")
+
+        for i, mail in enumerate(emails, start=1):
+            speak(f"Email {i}: {mail['subject']}")
+
+        speak("Which email should I delete? Say one, two, or three.")
+        record_audio("audio/choice.wav")
+        choice_text = transcribe("audio/choice.wav")
+
+        idx = pick_index(choice_text)
+        if idx is None or idx >= len(emails):
+            speak("Invalid choice")
+            return True
+
+        selected = emails[idx]
+
+        speak(f"Are you sure you want to delete the email with subject {selected['subject']}?")
+        record_audio("audio/confirm.wav")
+        confirm = transcribe("audio/confirm.wav")
+
+        if is_positive(confirm):
+            delete_email(service, selected["id"])
+            speak("Email moved to trash")
+        else:
+            speak("Deletion cancelled")
+
     # 📝 SUMMARIZE EMAIL
     elif intent["intent"] == "SUMMARIZE_LATEST_EMAIL":
         email = get_latest_email(service)
@@ -197,7 +237,29 @@ def handle_command(service) -> bool:
         else:
             speak(f"Latest email subject is {email['subject']}")
 
-    # 🗑 DELETE EMAIL
+    # 🧹 DELETE ALL READ EMAILS
+    elif intent["intent"] == "DELETE_LATEST_EMAIL" and "read" in text.lower():
+        speak("This will move all read emails to trash. Are you sure?")
+        record_audio("audio/confirm.wav")
+        confirm = transcribe("audio/confirm.wav")
+
+        if not is_positive(confirm):
+            speak("Cancelled")
+            return True
+
+        from gmail.gmail_client import get_read_emails
+        read_emails = get_read_emails(service)
+
+        if not read_emails:
+            speak("There are no read emails to delete")
+            return True
+
+        for msg in read_emails:
+            delete_email(service, msg["id"])
+
+        speak(f"Moved {len(read_emails)} read emails to trash")
+
+    # 🗑 DELETE LATEST EMAIL
     elif intent["intent"] == "DELETE_LATEST_EMAIL":
         email = get_latest_email(service)
         if not email:
@@ -213,7 +275,7 @@ def handle_command(service) -> bool:
 
         if is_positive(reply):
             delete_email(service, email["id"])
-            speak("Email deleted")
+            speak("Email moved to trash")
         else:
             speak("Deletion cancelled")
 
@@ -238,7 +300,6 @@ def main():
 
         print("Wake heard:", heard)
 
-        # 🛑 Shutdown from wake state
         if is_shutdown(heard):
             speak("Goodbye. Shutting down.")
             sys.exit(0)

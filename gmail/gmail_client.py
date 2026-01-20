@@ -178,3 +178,13 @@ def reply_to_email(service, original_email, reply_text):
         userId="me",
         body={"raw": raw}
     ).execute()
+
+def get_read_emails(service, max_results=20):
+    results = service.users().messages().list(
+        userId="me",
+        q="-label:UNREAD",
+        maxResults=max_results
+    ).execute()
+
+    messages = results.get("messages", [])
+    return messages
