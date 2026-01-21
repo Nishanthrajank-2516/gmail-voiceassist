@@ -188,3 +188,67 @@ def get_read_emails(service, max_results=20):
 
     messages = results.get("messages", [])
     return messages
+
+
+def get_unread_emails(service, max_results=10):
+    results = service.users().messages().list(
+        userId="me",
+        labelIds=["INBOX", "UNREAD"],
+        maxResults=max_results
+    ).execute()
+
+    messages = results.get("messages", [])
+    emails = []
+
+    for msg in messages:
+        msg_data = service.users().messages().get(
+            userId="me",
+            id=msg["id"],
+            format="full"
+        ).execute()
+
+        headers = msg_data["payload"]["headers"]
+        subject = next((h["value"] for h in headers if h["name"] == "Subject"), "")
+        sender = next((h["value"] for h in headers if h["name"] == "From"), "")
+
+        emails.append({
+            "id": msg["id"],
+            "from": sender,
+            "subject": subject,
+            "raw": msg_data
+        })
+
+    return emails
+
+import base64
+from email.message import EmailMessage
+
+
+def forward_email(service, email_obj, to_email):
+    msg = EmailMessage()
+
+    subject = email_obj.get("subject", "")
+    body = (
+        email_obj.get("body")
+        or email_obj.get("snippet")
+        or "Forwarded email content"
+    )
+
+    msg["To"] = to_email
+    msg["Subject"] = f"Fwd: {subject}"
+
+    forwarded_text = (
+        "---------- Forwarded message ----------\n"
+        f"From: {email_obj.get('from')}\n"
+        f"Subject: {subject}\n\n"
+        f"{body}"
+    )
+
+    msg.set_content(forwarded_text)
+
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+
+    service.users().messages().send(
+        userId="me",
+        body={"raw": raw}
+    ).execute()

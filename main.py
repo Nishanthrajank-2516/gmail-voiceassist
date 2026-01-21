@@ -1,7 +1,7 @@
 from audio.recorder import record_audio
 from stt.whisper_engine import transcribe
 from utils.contacts import resolve_contact
-
+from gmail.gmail_client import get_unread_emails
 from llm.intent_engine import extract_intent
 from llm.intent_utils import normalize_intent
 
@@ -53,30 +53,78 @@ def is_positive(text: str) -> bool:
     )
 
 
+import re
+
 def pick_index(text: str) -> int | None:
-    mapping = {
-        "one": 0,
-        "two": 1,
-        "three": 2,
-        "1": 0,
-        "2": 1,
-        "3": 2,
+    if not text:
+        return None
+
+    text = text.lower()
+
+    word_map = {
+        "one": 1,
+        "two": 2,
+        "three": 3,
+        "four": 4,
+        "five": 5,
+        "six": 6,
+        "seven": 7,
+        "eight": 8,
+        "nine": 9,
+        "ten": 10,
     }
-    return mapping.get(text.lower())
+
+    # 1️⃣ Try number extraction first (most reliable)
+    numbers = re.findall(r"\d+", text)
+    if numbers:
+        return int(numbers[0]) - 1
+
+    # 2️⃣ Try word-based numbers (even with punctuation)
+    for word, num in word_map.items():
+        if word in text:
+            return num - 1
+
+    return None
 
 
 def ask_and_handle_reply(service, email_obj):
-    speak("Do you want to reply to this email?")
-    record_audio("audio/reply_confirm.wav")
-    reply = transcribe("audio/reply_confirm.wav")
+    speak("Do you want to reply or forward this email?")
+    record_audio("audio/action_confirm.wav")
+    action = transcribe("audio/action_confirm.wav").lower()
 
-    if is_positive(reply):
+    # ✉️ REPLY
+    if "reply" in action:
         speak("What should I reply?")
         record_audio("audio/reply_body.wav")
         reply_text = transcribe("audio/reply_body.wav")
 
         reply_to_email(service, email_obj, reply_text)
         speak("Reply sent")
+
+    # 📤 FORWARD
+    elif "forward" in action:
+        speak("Please say the name of the contact to forward to")
+        record_audio("audio/forward_to.wav")
+        name = transcribe("audio/forward_to.wav")
+
+        to_email = resolve_contact(name)
+
+        if not to_email:
+            speak("I could not find that contact")
+            return
+
+        speak(f"Do you want me to forward this email to {name}?")
+        record_audio("audio/confirm.wav")
+        confirm = transcribe("audio/confirm.wav")
+
+        if not is_positive(confirm):
+            speak("Forward cancelled")
+            return
+
+        from gmail.gmail_client import forward_email
+        forward_email(service, email_obj, to_email)
+        speak("Email forwarded successfully")
+
 
 
 def handle_command(service) -> bool:
@@ -157,6 +205,49 @@ def handle_command(service) -> bool:
                 speak("This email does not contain readable text")
 
             ask_and_handle_reply(service, email)
+
+    # 📥 LIST & READ UNREAD EMAILS
+    elif intent["intent"] == "READ_UNREAD_EMAILS":
+        emails = get_unread_emails(service, max_results=10)
+
+        if not emails:
+            speak("You have no unread emails")
+            return True
+
+        speak(f"here are the last {len(emails)} unread emails")
+
+        for i, mail in enumerate(emails, start=1):
+            speak(f"Email {i} from {mail['from']} with subject {mail['subject']}")
+
+        speak("Which email should I read? Say a number between one and ten.")
+        record_audio("audio/choice.wav")
+        choice_text = transcribe("audio/choice.wav")
+
+        idx = pick_index(choice_text)
+        if idx is None or idx >= len(emails):
+            speak("Invalid choice")
+            return True
+
+        selected = emails[idx]
+
+        speak(f"Reading email from {selected['from']}")
+        speak(f"Subject {selected['subject']}")
+
+        snippet = selected["raw"].get("snippet")
+        if snippet:
+            speak(snippet)
+
+        # Ask for reply
+        ask_and_handle_reply(service, selected)
+
+        # Ask for delete
+        speak("Do you want to move this email to trash?")
+        record_audio("audio/confirm.wav")
+        confirm = transcribe("audio/confirm.wav")
+
+        if is_positive(confirm):
+            delete_email(service, selected["id"])
+            speak("Email moved to trash")
 
     # 📬 READ EMAILS FROM SENDER
     elif intent["intent"] == "READ_EMAIL_FROM_SENDER":
