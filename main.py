@@ -105,14 +105,33 @@ def ask_and_handle_reply(service, email_obj):
 
     # ✉️ REPLY
     if "reply" in action:
-        speak("What should I reply?")
-        path=app_path("audio","reply_body.wav")
+        speak("Please tell your reply. I am listening.")
+        path = app_path("audio", "reply_body.wav")
+        ensure_audio_path(path)
+
+        # 🎙 listen for 10 seconds
+        record_audio_seconds(path, 10)
+        raw_reply = transcribe(path)
+
+        # ✨ enhance (grammar + clarity ONLY)
+        enhanced_reply = enhance_email_body(raw_reply)
+
+        # 🔊 read back for confirmation
+        speak("Here is your reply")
+        speak(enhanced_reply)
+
+        speak("Do you want me to send this reply?")
+        path = app_path("audio", "reply_confirm.wav")
         ensure_audio_path(path)
         record_audio(path)
-        reply_text = transcribe(path)
+        confirm = transcribe(path)
 
-        reply_to_email(service, email_obj, reply_text)
-        speak("Reply sent")
+        if not is_positive(confirm):
+            speak("Reply cancelled")
+            return
+
+        reply_to_email(service, email_obj, enhanced_reply)
+        speak("Reply sent successfully")
 
     # 📤 FORWARD
     elif "forward" in action:
