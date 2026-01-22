@@ -13,3 +13,14 @@ def record_audio(output_file):
     sd.wait()
     print("Recording finished.")
     wav.write(output_file, SAMPLE_RATE, audio)
+
+def record_audio_seconds(output_file, seconds):
+    print(f"Recording for {seconds} seconds...")
+    audio = sd.rec(
+        int(seconds * SAMPLE_RATE),
+        samplerate=SAMPLE_RATE,
+        channels=1,
+        dtype="int16"
+    )
+    sd.wait()
+    wav.write(output_file, SAMPLE_RATE, audio)

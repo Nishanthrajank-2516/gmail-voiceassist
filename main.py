@@ -1,3 +1,13 @@
+import os
+import sys
+
+def app_path(*paths):
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, *paths)
+
+def ensure_audio_path(path):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+
 from audio.recorder import record_audio
 from stt.whisper_engine import transcribe
 from utils.contacts import resolve_contact
@@ -17,11 +27,10 @@ from gmail.gmail_client import (
 from tts.speaker import speak
 from utils.email_analyzer import analyze_email, html_to_text
 import time
-import sys
 
 
 # 🔊 Wake words
-WAKE_WORDS = ["zara", "sara"]
+WAKE_WORDS = ["zara", "sara","sarah"]
 
 # 💤 Session exit (sleep)
 EXIT_WORDS = ["cancel", "stop", "go to sleep", "sleep"]
@@ -49,7 +58,7 @@ def is_positive(text: str) -> bool:
     text = text.lower()
     return any(
         word in text
-        for word in ["yes", "yeah", "sure", "ok", "okay", "read", "delete", "reply"]
+        for word in ["yes", "yeah", "sure", "ok", "okay", "read", "delete", "reply", "forward", "send"]
     )
 
 
@@ -89,14 +98,18 @@ def pick_index(text: str) -> int | None:
 
 def ask_and_handle_reply(service, email_obj):
     speak("Do you want to reply or forward this email?")
-    record_audio("audio/action_confirm.wav")
-    action = transcribe("audio/action_confirm.wav").lower()
+    path=app_path("audio","action_confirm.wav")
+    ensure_audio_path(path)
+    record_audio(path)
+    action = transcribe(path).lower()
 
     # ✉️ REPLY
     if "reply" in action:
         speak("What should I reply?")
-        record_audio("audio/reply_body.wav")
-        reply_text = transcribe("audio/reply_body.wav")
+        path=app_path("audio","reply_body.wav")
+        ensure_audio_path(path)
+        record_audio(path)
+        reply_text = transcribe(path)
 
         reply_to_email(service, email_obj, reply_text)
         speak("Reply sent")
@@ -104,8 +117,10 @@ def ask_and_handle_reply(service, email_obj):
     # 📤 FORWARD
     elif "forward" in action:
         speak("Please say the name of the contact to forward to")
-        record_audio("audio/forward_to.wav")
-        name = transcribe("audio/forward_to.wav")
+        path=app_path("audio","forward_to.wav")
+        ensure_audio_path(path)
+        record_audio(path)
+        name = transcribe(path)
 
         to_email = resolve_contact(name)
 
@@ -114,8 +129,10 @@ def ask_and_handle_reply(service, email_obj):
             return
 
         speak(f"Do you want me to forward this email to {name}?")
-        record_audio("audio/confirm.wav")
-        confirm = transcribe("audio/confirm.wav")
+        path=app_path("audio","forward_confirm.wav")
+        ensure_audio_path(path)
+        record_audio(path)
+        confirm = transcribe(path)
 
         if not is_positive(confirm):
             speak("Forward cancelled")
@@ -125,11 +142,72 @@ def ask_and_handle_reply(service, email_obj):
         forward_email(service, email_obj, to_email)
         speak("Email forwarded successfully")
 
+from audio.recorder import record_audio_seconds
+from llm.email_enhancer import enhance_email_body
+
+def guided_send_email(service):
+    # 1️⃣ Recipient
+    speak("Whom should I send the email to?")
+    path = app_path("audio", "send_to.wav")
+    ensure_audio_path(path)
+    record_audio(path)
+    name = transcribe(path)
+
+    to_email = resolve_contact(name)
+    if not to_email:
+        speak("I could not find that contact")
+        return
+
+    # 2️⃣ Subject
+    speak("What is the subject?")
+    path = app_path("audio", "send_subject.wav")
+    ensure_audio_path(path)
+    record_audio(path)
+    subject = transcribe(path)
+
+    # 3️⃣ Body (10 seconds)
+    speak("Please tell the email body. I am listening.")
+    path = app_path("audio", "send_body.wav")
+    ensure_audio_path(path)
+    record_audio_seconds(path, 10)
+    raw_body = transcribe(path)
+
+    # 4️⃣ Enhance body
+    enhanced_body = enhance_email_body(raw_body)
+
+    # 5️⃣ Read back
+    speak(f"Sending email to {name}")
+    speak(f"Subject: {subject}")
+    speak("Here is the email content")
+    speak(enhanced_body)
+
+    # 6️⃣ Confirmation
+    speak("Do you want me to send this email?")
+    path = app_path("audio", "send_confirm.wav")
+    ensure_audio_path(path)
+    record_audio(path)
+    confirm = transcribe(path)
+
+    if not is_positive(confirm):
+        speak("Email cancelled")
+        return
+
+    # 7️⃣ Send
+    send_email(
+        service,
+        to_email=to_email,
+        subject=subject,
+        body=enhanced_body,
+    )
+
+    speak("Email sent successfully")
 
 
 def handle_command(service) -> bool:
-    record_audio("audio/input.wav")
-    text = transcribe("audio/input.wav")
+    path=app_path("audio","input.wav")  
+    ensure_audio_path(path)
+    record_audio(path)
+    text = transcribe(path)
 
     print("You said:", text)
 
@@ -157,20 +235,8 @@ def handle_command(service) -> bool:
 
     # 📧 SEND EMAIL
     if intent["intent"] == "SEND_EMAIL":
-        if not intent["to"] or not intent["body"]:
-            speak("I need a recipient and message")
-            return True
+        guided_send_email(service)
 
-        resolved_email = resolve_contact(intent["to"]) or intent["to"]
-
-        speak(f"Sending email to {intent['to']}")
-        send_email(
-            service,
-            to_email=resolved_email,
-            subject=intent["subject"] or "Voice Assistant Message",
-            body=intent["body"],
-        )
-        speak("Email sent")
 
     # 📖 READ LATEST EMAIL
     elif intent["intent"] == "READ_LATEST_EMAIL":
@@ -192,8 +258,10 @@ def handle_command(service) -> bool:
             speak(f"This email has {len(analysis['attachments'])} attachments")
 
         speak("Do you want me to read the email body?")
-        record_audio("audio/confirm.wav")
-        reply = transcribe("audio/confirm.wav")
+        path=app_path("audio","confirm.wav")
+        ensure_audio_path(path)
+        record_audio(path)
+        reply = transcribe(path)
 
         if is_positive(reply):
             if email.get("body"):
@@ -220,8 +288,10 @@ def handle_command(service) -> bool:
             speak(f"Email {i} from {mail['from']} with subject {mail['subject']}")
 
         speak("Which email should I read? Say a number between one and ten.")
-        record_audio("audio/choice.wav")
-        choice_text = transcribe("audio/choice.wav")
+        path=app_path("audio","choice.wav")
+        ensure_audio_path(path)
+        record_audio(path)
+        choice_text = transcribe(path)
 
         idx = pick_index(choice_text)
         if idx is None or idx >= len(emails):
@@ -242,8 +312,10 @@ def handle_command(service) -> bool:
 
         # Ask for delete
         speak("Do you want to move this email to trash?")
-        record_audio("audio/confirm.wav")
-        confirm = transcribe("audio/confirm.wav")
+        path=app_path("audio","confirm.wav")
+        ensure_audio_path(path)
+        record_audio(path)
+        confirm = transcribe(path)
 
         if is_positive(confirm):
             delete_email(service, selected["id"])
@@ -266,8 +338,10 @@ def handle_command(service) -> bool:
             speak(f"Email {i}: {mail['subject']}")
 
         speak("Which email should I read? Say one, two, or three.")
-        record_audio("audio/choice.wav")
-        choice_text = transcribe("audio/choice.wav")
+        path=app_path("audio","choice.wav")
+        ensure_audio_path(path)
+        record_audio(path)
+        choice_text = transcribe(path)
 
         idx = pick_index(choice_text)
         if idx is None or idx >= len(emails):
@@ -300,8 +374,10 @@ def handle_command(service) -> bool:
             speak(f"Email {i}: {mail['subject']}")
 
         speak("Which email should I delete? Say one, two, or three.")
-        record_audio("audio/choice.wav")
-        choice_text = transcribe("audio/choice.wav")
+        path=app_path("audio","choice.wav")
+        ensure_audio_path(path)
+        record_audio(path)
+        choice_text = transcribe(path)
 
         idx = pick_index(choice_text)
         if idx is None or idx >= len(emails):
@@ -311,8 +387,10 @@ def handle_command(service) -> bool:
         selected = emails[idx]
 
         speak(f"Are you sure you want to delete the email with subject {selected['subject']}?")
-        record_audio("audio/confirm.wav")
-        confirm = transcribe("audio/confirm.wav")
+        path=app_path("audio","confirm.wav")
+        ensure_audio_path(path)
+        record_audio(path)
+        confirm = transcribe(path)
 
         if is_positive(confirm):
             delete_email(service, selected["id"])
@@ -331,8 +409,10 @@ def handle_command(service) -> bool:
     # 🧹 DELETE ALL READ EMAILS
     elif intent["intent"] == "DELETE_LATEST_EMAIL" and "read" in text.lower():
         speak("This will move all read emails to trash. Are you sure?")
-        record_audio("audio/confirm.wav")
-        confirm = transcribe("audio/confirm.wav")
+        path=app_path("audio","confirm.wav")
+        ensure_audio_path(path)
+        record_audio(path)
+        confirm = transcribe(path)
 
         if not is_positive(confirm):
             speak("Cancelled")
@@ -361,8 +441,10 @@ def handle_command(service) -> bool:
         speak(f"Subject {email['subject']}")
         speak("Are you sure you want to delete this email?")
 
-        record_audio("audio/confirm.wav")
-        reply = transcribe("audio/confirm.wav")
+        path=app_path("audio","confirm.wav")
+        ensure_audio_path(path)
+        record_audio(path)
+        reply = transcribe(path)
 
         if is_positive(reply):
             delete_email(service, email["id"])
@@ -382,12 +464,14 @@ def handle_command(service) -> bool:
 
 
 def main():
-    speak("Assistant is running. Say the wake word to wake me up.")
+    speak("Assistant is loaded. Say the wake word to start.")
     service = authenticate_gmail()
 
     while True:
-        record_audio("audio/wake.wav")
-        heard = transcribe("audio/wake.wav")
+        path=app_path("audio","wake.wav")
+        ensure_audio_path(path)
+        record_audio(path)
+        heard = transcribe(path)
 
         print("Wake heard:", heard)
 
@@ -407,7 +491,7 @@ def main():
                     break
 
                 misunderstand_count += 1
-                if misunderstand_count >= 2:
+                if misunderstand_count >= 5:
                     speak("I am going back to sleep.")
                     break
 
