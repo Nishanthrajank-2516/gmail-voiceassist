@@ -25,11 +25,14 @@ STRICT RULES (DO NOT BREAK):
 - DO NOT invent or assume context
 - DO NOT add examples or templates
 - Keep the meaning EXACTLY the same
-- The improved text must NOT be longer than 2× the original length
+- The improved text may expand slightly for clarity, up to TWO short paragraphs
+- Do NOT add new information or ideas
+
 - If something is not mentioned, DO NOT add it
 
 Original email body:
 {text}
+
 
 Return ONLY the improved email body.
 """

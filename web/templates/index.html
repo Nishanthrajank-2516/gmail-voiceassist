@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Gmail Voice Assistant</title>
+    <meta http-equiv="refresh" content="1">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<div class="card">
+    <h1>📧 Gmail Voice Assistant</h1>
+
+    <div class="row">
+        <span>State</span>
+        <strong>{{ state }}</strong>
+    </div>
+
+    
+    <div class="row">
+        <span>Intent</span>
+        <strong>{{ intent or "-" }}</strong>
+    </div>
+
+    <div class="row">
+        <span>Action</span>
+        <strong>{{ action or "-" }}</strong>
+    </div>
+</div>
+
+</body>
+</html>

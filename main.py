@@ -1,3 +1,12 @@
+import threading
+import webbrowser
+from web.app import start_web
+import shared_state
+
+threading.Thread(target=start_web, daemon=True).start()
+
+webbrowser.open("http://127.0.0.1:5000")
+
 import os
 import sys
 
@@ -30,7 +39,7 @@ import time
 
 
 # 🔊 Wake words
-WAKE_WORDS = ["zara", "sara","sarah"]
+WAKE_WORDS = ["zara", "sara","sarah", "sala"]
 
 # 💤 Session exit (sleep)
 EXIT_WORDS = ["cancel", "stop", "go to sleep", "sleep"]
@@ -70,6 +79,9 @@ def pick_index(text: str) -> int | None:
 
     text = text.lower()
 
+    # 🔹 Remove filler words & punctuation
+    text = re.sub(r"[^a-z0-9\s]", " ", text)
+
     word_map = {
         "one": 1,
         "two": 2,
@@ -83,21 +95,25 @@ def pick_index(text: str) -> int | None:
         "ten": 10,
     }
 
-    # 1️⃣ Try number extraction first (most reliable)
-    numbers = re.findall(r"\d+", text)
+    # 1️⃣ DIGITS FIRST (highest priority)
+    numbers = re.findall(r"\b\d+\b", text)
     if numbers:
-        return int(numbers[0]) - 1
+        idx = int(numbers[0]) - 1
+        return idx if idx >= 0 else None
 
-    # 2️⃣ Try word-based numbers (even with punctuation)
+    # 2️⃣ WORD NUMBERS
     for word, num in word_map.items():
-        if word in text:
+        if re.search(rf"\b{word}\b", text):
             return num - 1
 
     return None
 
 
+
 def ask_and_handle_reply(service, email_obj):
+    shared_state.current_action = "replying"
     speak("Do you want to reply or forward this email?")
+    shared_state.assistant_state = "speaking"
     path=app_path("audio","action_confirm.wav")
     ensure_audio_path(path)
     record_audio(path)
@@ -106,6 +122,7 @@ def ask_and_handle_reply(service, email_obj):
     # ✉️ REPLY
     if "reply" in action:
         speak("Please tell your reply. I am listening.")
+        shared_state.assistant_state = "speaking"
         path = app_path("audio", "reply_body.wav")
         ensure_audio_path(path)
 
@@ -119,7 +136,7 @@ def ask_and_handle_reply(service, email_obj):
         # 🔊 read back for confirmation
         speak("Here is your reply")
         speak(enhanced_reply)
-
+        shared_state.assistant_state = "speaking"
         speak("Do you want me to send this reply?")
         path = app_path("audio", "reply_confirm.wav")
         ensure_audio_path(path)
@@ -135,6 +152,8 @@ def ask_and_handle_reply(service, email_obj):
 
     # 📤 FORWARD
     elif "forward" in action:
+        shared_state.current_action = "forwarding email"
+        shared_state.assistant_state = "speaking"
         speak("Please say the name of the contact to forward to")
         path=app_path("audio","forward_to.wav")
         ensure_audio_path(path)
@@ -165,7 +184,9 @@ from audio.recorder import record_audio_seconds
 from llm.email_enhancer import enhance_email_body
 
 def guided_send_email(service):
+    shared_state.current_action = "sending email"
     # 1️⃣ Recipient
+    shared_state.assistant_state = "speaking"
     speak("Whom should I send the email to?")
     path = app_path("audio", "send_to.wav")
     ensure_audio_path(path)
@@ -186,6 +207,7 @@ def guided_send_email(service):
 
     # 3️⃣ Body (10 seconds)
     speak("Please tell the email body. I am listening.")
+
     path = app_path("audio", "send_body.wav")
     ensure_audio_path(path)
     record_audio_seconds(path, 10)
@@ -223,6 +245,8 @@ def guided_send_email(service):
 
 
 def handle_command(service) -> bool:
+    intent = {"intent": None}
+
     path=app_path("audio","input.wav")  
     ensure_audio_path(path)
     record_audio(path)
@@ -244,6 +268,7 @@ def handle_command(service) -> bool:
     intent = normalize_intent(intent_raw)
 
     print("Intent:", intent)
+    shared_state.current_intent = intent["intent"]
 
     # 🔁 INTENT UPGRADES (NO FEATURE REMOVAL)
     if intent["intent"] == "READ_LATEST_EMAIL" and intent.get("to"):
@@ -259,6 +284,7 @@ def handle_command(service) -> bool:
 
     # 📖 READ LATEST EMAIL
     elif intent["intent"] == "READ_LATEST_EMAIL":
+        shared_state.current_action = "reading email"
         email = get_latest_email(service)
         if not email:
             speak("Your inbox is empty")
@@ -295,6 +321,7 @@ def handle_command(service) -> bool:
 
     # 📥 LIST & READ UNREAD EMAILS
     elif intent["intent"] == "READ_UNREAD_EMAILS":
+        shared_state.current_action = "reading email"
         emails = get_unread_emails(service, max_results=10)
 
         if not emails:
@@ -342,6 +369,7 @@ def handle_command(service) -> bool:
 
     # 📬 READ EMAILS FROM SENDER
     elif intent["intent"] == "READ_EMAIL_FROM_SENDER":
+        shared_state.current_action = "reading email"
         sender_name = intent.get("to")
         sender_email = resolve_contact(sender_name) or sender_name
 
@@ -378,6 +406,7 @@ def handle_command(service) -> bool:
 
     # 🗑 DELETE EMAIL FROM SENDER
     elif intent["intent"] == "DELETE_EMAIL_FROM_SENDER":
+        shared_state.current_action = "deleting email"
         sender_name = intent.get("to")
         sender_email = resolve_contact(sender_name) or sender_name
 
@@ -427,6 +456,7 @@ def handle_command(service) -> bool:
 
     # 🧹 DELETE ALL READ EMAILS
     elif intent["intent"] == "DELETE_LATEST_EMAIL" and "read" in text.lower():
+        shared_state.current_action = "deleting email"
         speak("This will move all read emails to trash. Are you sure?")
         path=app_path("audio","confirm.wav")
         ensure_audio_path(path)
@@ -451,6 +481,7 @@ def handle_command(service) -> bool:
 
     # 🗑 DELETE LATEST EMAIL
     elif intent["intent"] == "DELETE_LATEST_EMAIL":
+        shared_state.current_action = "deleting email"
         email = get_latest_email(service)
         if not email:
             speak("No email to delete")
@@ -485,8 +516,11 @@ def handle_command(service) -> bool:
 def main():
     speak("Assistant is loaded. Say the wake word to start.")
     service = authenticate_gmail()
+    shared_state.current_action = "email authentication"
 
     while True:
+        shared_state.assistant_state = "sleeping"
+
         path=app_path("audio","wake.wav")
         ensure_audio_path(path)
         record_audio(path)
@@ -494,12 +528,15 @@ def main():
 
         print("Wake heard:", heard)
 
+
         if is_shutdown(heard):
             speak("Goodbye. Shutting down.")
             sys.exit(0)
 
         if is_wake_word(heard):
             speak("Yes, I am listening")
+            shared_state.assistant_state = "listening"
+
 
             misunderstand_count = 0
 
@@ -512,6 +549,9 @@ def main():
                 misunderstand_count += 1
                 if misunderstand_count >= 5:
                     speak("I am going back to sleep.")
+                    shared_state.assistant_state = "sleeping"
+                    shared_state.current_action = ""
+
                     break
 
         time.sleep(0.4)

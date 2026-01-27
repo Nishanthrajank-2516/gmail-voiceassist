@@ -25,3 +25,10 @@ audio/*.wav
 
 # Local contacts (personal data)
 utils/contacts.py
+
+build/
+
+dist/
+dist/GmailVoiceAssistant
+
+GmailVoiceAssistant.spec
