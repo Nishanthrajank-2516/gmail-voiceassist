@@ -1,4 +1,6 @@
 import sounddevice as sd
+sd.default.device = None
+
 import scipy.io.wavfile as wav
 from config.settings import SAMPLE_RATE, RECORD_SECONDS
 

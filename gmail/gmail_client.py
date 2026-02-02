@@ -1,15 +1,24 @@
 import os
 import base64
 from email.mime.text import MIMEText
+import sys
 
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
+def get_base_path():
+    # When launched via .desktop or packaged executable
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    # When run normally with python
+    return os.path.dirname(os.path.abspath(__file__))
 
-TOKEN_PATH = "config/token.json"
-CREDENTIALS_PATH = "config/credentials.json"
+BASE_DIR = get_base_path()
+
+TOKEN_PATH = os.path.join(BASE_DIR, "config", "token.json")
+CREDENTIALS_PATH = os.path.join(BASE_DIR, "config", "credentials.json")
 
 
 def authenticate_gmail():

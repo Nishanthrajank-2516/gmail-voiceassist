@@ -9,8 +9,7 @@ venv/
 .env/
 
 # Gmail OAuth
-token.json
-credentials.json
+config/*.json
 
 # Audio files
 audio/*.wav
